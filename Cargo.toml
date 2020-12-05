@@ -8,3 +8,5 @@ edition = "2018"
 
 [dependencies]
 scan_fmt = "0.2.5"
+regex = "1.4.2"
+lazy_static = "1.4.0"

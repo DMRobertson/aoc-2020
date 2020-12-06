@@ -1,5 +1,8 @@
 #[derive(Copy, Clone, PartialEq, Debug)]
-enum Tile { Open, Tree }
+enum Tile {
+    Open,
+    Tree,
+}
 
 impl Tile {
     fn parse(c: char) -> Option<Self> {
@@ -19,8 +22,11 @@ struct Map {
 }
 
 impl Map {
-    fn parse<'a>(mut lines: impl Iterator<Item=&'a str>) -> Self {
-        let mut tiles: Vec<Tile> = lines.next().unwrap().chars()
+    fn parse<'a>(mut lines: impl Iterator<Item = &'a str>) -> Self {
+        let mut tiles: Vec<Tile> = lines
+            .next()
+            .unwrap()
+            .chars()
             .map(Tile::parse)
             .map(Option::unwrap)
             .collect();
@@ -33,7 +39,11 @@ impl Map {
                 .for_each(|t| tiles.push(t));
             height += 1;
         }
-        Self { width, height, tiles }
+        Self {
+            width,
+            height,
+            tiles,
+        }
     }
 
     fn at(&self, location: [usize; 2]) -> Option<Tile> {
@@ -56,38 +66,31 @@ impl Iterator for TobogganRide<'_> {
     type Item = Tile;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.map.at(self.location)
-            .map(|c| {
-                self.location[0] += self.direction[0];
-                self.location[1] += self.direction[1];
-                c
-            })
+        self.map.at(self.location).map(|c| {
+            self.location[0] += self.direction[0];
+            self.location[1] += self.direction[1];
+            c
+        })
     }
 }
 
-const DIRECTIONS: [[usize; 2]; 5] = [
-    [1, 1],
-    [3, 1],
-    [5, 1],
-    [7, 1],
-    [1, 2],
-];
+const DIRECTIONS: [[usize; 2]; 5] = [[1, 1], [3, 1], [5, 1], [7, 1], [1, 2]];
 
 fn main() {
-    let lines: Vec<_> = aoc_2020::problem_input().collect();
+    let lines: Vec<_> = aoc_2020::problem_lines().collect();
     let map = Map::parse(lines.iter().map(|s| s.as_str()));
-    let counts: Vec<_> = DIRECTIONS.iter()
-        .map(|dir| trees_hit(&map, *dir))
-        .collect();
+    let counts: Vec<_> = DIRECTIONS.iter().map(|dir| trees_hit(&map, *dir)).collect();
     println!("{:?}", counts);
     println!("{}", counts.iter().product::<usize>());
 }
 
 fn trees_hit(map: &Map, direction: [usize; 2]) -> usize {
-    let path = TobogganRide { location: [0, 0], direction, map: &map };
-    path
-        .filter(|&t| t == Tile::Tree)
-        .count()
+    let path = TobogganRide {
+        location: [0, 0],
+        direction,
+        map: &map,
+    };
+    path.filter(|&t| t == Tile::Tree).count()
 }
 
 #[cfg(test)]
@@ -108,8 +111,7 @@ mod test {
 .#..#...#.#";
 
     #[test]
-    fn example_toboggan_ride()
-    {
+    fn example_toboggan_ride() {
         let map = Map::parse(lines.split('\n'));
         assert_eq!(trees_hit(&map, [3, 1]), 7);
     }
@@ -117,7 +119,10 @@ mod test {
     #[test]
     fn lots_of_toboggan_rides() {
         let map = Map::parse(lines.split('\n'));
-        let trees_hit = DIRECTIONS.iter().map(|dir| trees_hit(&map, direction)).collect();
+        let trees_hit = DIRECTIONS
+            .iter()
+            .map(|dir| trees_hit(&map, direction))
+            .collect();
         assert_eq!(trees_hit, vec![2, 7, 3, 4, 2]);
         assert_eq!(trees_hit.iter().product::<usize>(), 336);
     }

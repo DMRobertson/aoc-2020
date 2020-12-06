@@ -43,13 +43,19 @@ impl RGBColor {
     fn parse(input: &str) -> Option<Self> {
         scan_fmt!(input, "#{2x}{2x}{2x}", [hex u8], [hex u8], [hex u8])
             .ok()
-            .map(|(r,g,b)| Self{r,g,b})
+            .map(|(r, g, b)| Self { r, g, b })
     }
 }
 
 #[derive(Debug)]
 enum EyeColor {
-    Amber, Blue, Brown, Grey, Green, Hazel, Other,
+    Amber,
+    Blue,
+    Brown,
+    Grey,
+    Green,
+    Hazel,
+    Other,
 }
 
 impl EyeColor {
@@ -118,13 +124,15 @@ impl ProtoPassport {
             "hgt" => self.height = Height::parse(value).filter(Height::valid),
             "hcl" => self.hair_color = RGBColor::parse(value),
             "ecl" => self.eye_color = EyeColor::parse(value),
-            "pid" => self.passport_id = {
-                if PASSPORT_ID_PATTERN.is_match(value) {
-                    Some(parse(value).unwrap())
-                } else {
-                    None
+            "pid" => {
+                self.passport_id = {
+                    if PASSPORT_ID_PATTERN.is_match(value) {
+                        Some(parse(value).unwrap())
+                    } else {
+                        None
+                    }
                 }
-            },
+            }
             "cid" => self.country_id = Some(value.to_owned()),
             _ => (),
         }
@@ -140,7 +148,7 @@ impl ProtoPassport {
                 hair_color: Some(hair_color),
                 eye_color: Some(eye_color),
                 passport_id: Some(passport_id),
-                country_id
+                country_id,
             } => Some(Passport {
                 birth_year,
                 issue_year,
@@ -154,16 +162,16 @@ impl ProtoPassport {
             _ => {
                 println!("INVALID: {:?}", self);
                 None
-            },
+            }
         }
     }
 }
 
-
 impl Passport {
     fn parse(input: &str) -> Option<Self> {
         let mut passport = ProtoPassport::new();
-        input.split_whitespace()
+        input
+            .split_whitespace()
             .map(|s| {
                 let mut parts = s.split(":").take(2);
                 (parts.next().unwrap(), parts.next().unwrap())
@@ -175,7 +183,7 @@ impl Passport {
 }
 
 fn main() {
-    let mut lines = aoc_2020::problem_input();
+    let mut lines = aoc_2020::problem_lines();
     let mut passports = lines.next().unwrap();
     for line in lines {
         passports.push_str("\n");
@@ -190,7 +198,8 @@ fn main() {
 }
 
 fn parse_passport_listings(input: &str) -> Vec<Option<Passport>> {
-    input.split("\n\n")
+    input
+        .split("\n\n")
         .inspect(|x| println!("{:?}", x))
         .map(Passport::parse)
         .collect()
@@ -243,12 +252,10 @@ mod test {
         assert_eq!(feed("hgt", "76").height.is_some(), false);
         assert_eq!(feed("hgt", "77").height.is_some(), false);
 
-
         assert_eq!(feed("hcl", "#123abc").height.is_some(), false);
         assert_eq!(feed("hcl", "#123abz").height.is_some(), false);
         assert_eq!(feed("hcl", "#123abc").height.is_some(), false);
         assert_eq!(feed("hcl", "123abz").height.is_some(), false);
-
 
         assert_eq!(feed("ecl", "amb").eye_color.is_some(), true);
         assert_eq!(feed("ecl", "blu").eye_color.is_some(), true);
@@ -264,8 +271,7 @@ mod test {
     }
 
     #[test]
-    fn examples()
-    {
+    fn examples() {
         const FIRST_EXAMPLES: &'static str = "\
 ecl:gry pid:860033327 eyr:2020 hcl:#fffffd
 byr:1937 iyr:2017 cid:147 hgt:183cm
@@ -289,8 +295,7 @@ iyr:2011 ecl:brn hgt:59in";
     }
 
     #[test]
-    fn invalid()
-    {
+    fn invalid() {
         const INVALID_PASSPORTS: &'static str = "\
 eyr:1972 cid:100
 hcl:#18171d ecl:amb hgt:170 pid:186cm iyr:2018 byr:1926
@@ -310,7 +315,6 @@ pid:3556412378 byr:2007";
             .map(|x| x.is_some())
             .collect();
         assert_eq!(invalid, vec![false; 4]);
-
     }
 
     #[test]

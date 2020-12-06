@@ -1,4 +1,4 @@
-use std::ops::{RangeInclusive};
+use std::ops::RangeInclusive;
 
 #[macro_use]
 extern crate scan_fmt;
@@ -15,10 +15,17 @@ struct OldPasswordPolicy {
 
 impl PasswordPolicy for OldPasswordPolicy {
     fn parse(desc: &str) -> Option<(Self, String)> {
-        scan_fmt!(desc, "{d}-{d} {}: {}", usize, usize, char, String).ok()
-            .map(|(min, max, required, password)|
-                (Self { required, occurrences: RangeInclusive::new(min, max) }, password)
-            )
+        scan_fmt!(desc, "{d}-{d} {}: {}", usize, usize, char, String)
+            .ok()
+            .map(|(min, max, required, password)| {
+                (
+                    Self {
+                        required,
+                        occurrences: RangeInclusive::new(min, max),
+                    },
+                    password,
+                )
+            })
     }
 
     fn permits(&self, password: &str) -> bool {
@@ -27,7 +34,6 @@ impl PasswordPolicy for OldPasswordPolicy {
     }
 }
 
-
 struct NewPasswordPolicy {
     required: char,
     positions: [usize; 2],
@@ -35,18 +41,24 @@ struct NewPasswordPolicy {
 
 impl PasswordPolicy for NewPasswordPolicy {
     fn parse(desc: &str) -> Option<(Self, String)> {
-        scan_fmt!(desc, "{d}-{d} {}: {}", usize, usize, char, String).ok()
-            .map(|(first, second, required, password)|
-                (Self { required, positions: [first, second] }, password)
-            )
+        scan_fmt!(desc, "{d}-{d} {}: {}", usize, usize, char, String)
+            .ok()
+            .map(|(first, second, required, password)| {
+                (
+                    Self {
+                        required,
+                        positions: [first, second],
+                    },
+                    password,
+                )
+            })
     }
 
     fn permits(&self, password: &str) -> bool {
-        let count: usize = password.chars()
+        let count: usize = password
+            .chars()
             .enumerate()
-            .filter(|&(index, c)|
-                self.positions.contains(&(index + 1)) && c == self.required
-            )
+            .filter(|&(index, c)| self.positions.contains(&(index + 1)) && c == self.required)
             .count();
         count == 1
         // should also check the passowrd is sufficiently long but screw it
@@ -54,19 +66,28 @@ impl PasswordPolicy for NewPasswordPolicy {
 }
 
 fn valid_password<Policy>(line: &str) -> Option<bool>
-    where Policy: PasswordPolicy {
-    Policy::parse(line)
-        .map(|(policy, password)| policy.permits(&password))
+where
+    Policy: PasswordPolicy,
+{
+    Policy::parse(line).map(|(policy, password)| policy.permits(&password))
 }
 
 fn main() {
-    let passwords: Vec<_> = aoc_2020::problem_input().collect();
-    println!("{} valid passwords", count_valid_passwords::<OldPasswordPolicy>(&passwords));
-    println!("{} valid passwords", count_valid_passwords::<NewPasswordPolicy>(&passwords));
+    let passwords: Vec<_> = aoc_2020::problem_lines().collect();
+    println!(
+        "{} valid passwords",
+        count_valid_passwords::<OldPasswordPolicy>(&passwords)
+    );
+    println!(
+        "{} valid passwords",
+        count_valid_passwords::<NewPasswordPolicy>(&passwords)
+    );
 }
 
 fn count_valid_passwords<Policy>(lines: &Vec<String>) -> usize
-where Policy: PasswordPolicy {
+where
+    Policy: PasswordPolicy,
+{
     lines
         .iter()
         .map(|s| valid_password::<Policy>(s))
@@ -79,18 +100,34 @@ mod test {
     use super::*;
 
     #[test]
-    fn old_policy()
-    {
-        assert_eq!(valid_password::<OldPasswordPolicy>("1-3 a: abcde"), Some(true));
-        assert_eq!(valid_password::<OldPasswordPolicy>("1-3 b: cdefg"), Some(false));
-        assert_eq!(valid_password::<OldPasswordPolicy>("2-9 c: ccccccccc"), Some(true));
+    fn old_policy() {
+        assert_eq!(
+            valid_password::<OldPasswordPolicy>("1-3 a: abcde"),
+            Some(true)
+        );
+        assert_eq!(
+            valid_password::<OldPasswordPolicy>("1-3 b: cdefg"),
+            Some(false)
+        );
+        assert_eq!(
+            valid_password::<OldPasswordPolicy>("2-9 c: ccccccccc"),
+            Some(true)
+        );
     }
 
     #[test]
-    fn new_policy()
-    {
-        assert_eq!(valid_password::<NewPasswordPolicy>("1-3 a: abcde"), Some(true));
-        assert_eq!(valid_password::<NewPasswordPolicy>("1-3 b: cdefg"), Some(false));
-        assert_eq!(valid_password::<NewPasswordPolicy>("2-9 c: ccccccccc"), Some(false));
+    fn new_policy() {
+        assert_eq!(
+            valid_password::<NewPasswordPolicy>("1-3 a: abcde"),
+            Some(true)
+        );
+        assert_eq!(
+            valid_password::<NewPasswordPolicy>("1-3 b: cdefg"),
+            Some(false)
+        );
+        assert_eq!(
+            valid_password::<NewPasswordPolicy>("2-9 c: ccccccccc"),
+            Some(false)
+        );
     }
 }

@@ -1,4 +1,4 @@
-use std::ops::{RangeInclusive};
+use std::ops::RangeInclusive;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Seat {
@@ -25,8 +25,7 @@ impl Seat {
 
         let mut cols: RangeInclusive<u8> = 0..=8;
         let mut half_height = 4;
-        for char in desc[7..10].chars()
-        {
+        for char in desc[7..10].chars() {
             match char {
                 'L' => cols = *cols.start()..=(*cols.start() + half_height),
                 'R' => cols = (*cols.end() - half_height)..=*cols.end(),
@@ -34,20 +33,22 @@ impl Seat {
             }
             half_height /= 2;
         }
-        Self { row: *rows.start(), column: *cols.start() }
+        Self {
+            row: *rows.start(),
+            column: *cols.start(),
+        }
     }
 }
 
 fn main() {
-    let lines = aoc_2020::problem_input();
-    let mut ids: Vec<_>= lines.map(|x| Seat::new(&x).id())
-        .collect();
+    let lines = aoc_2020::problem_lines();
+    let mut ids: Vec<_> = lines.map(|x| Seat::new(&x).id()).collect();
 
     println!("{}", ids.iter().max().unwrap());
 
     ids.sort();
-    for i in 1..(ids.len() -1) {
-        if ids[i] + 2 == ids[i+1] {
+    for i in 1..(ids.len() - 1) {
+        if ids[i] + 2 == ids[i + 1] {
             println!("{}", ids[i] + 1);
             break;
         }

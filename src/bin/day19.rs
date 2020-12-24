@@ -1,61 +1,76 @@
-use itertools::join;
-use petgraph::graphmap::GraphMap;
+use std::collections::{HashMap, HashSet};
+use std::mem::swap;
+use std::rc::Rc;
+
+use itertools::{join, Itertools};
+use petgraph::prelude::GraphMap;
 use petgraph::visit::depth_first_search;
 use petgraph::visit::DfsEvent::Finish;
 use petgraph::Directed;
 use regex::Regex;
-use std::collections::HashMap;
-use std::mem::swap;
 
 fn main() {
     let lines: Vec<_> = aoc_2020::problem_lines().collect();
-    let mut lines = lines.iter().map(AsRef::as_ref);
-    let mut rules = read_rules(&mut lines);
+    let i = lines.iter().position(|l| l == "").unwrap();
+    let rules = &lines[..i];
+    let examples = &lines[(i + 1)..];
+
+    let mut lines = rules.iter().map(AsRef::as_ref);
+    let rules = read_rules(&mut lines);
     let dependencies = dependency_graph(&rules);
 
-    let original_patterns = build_patterns(0, &rules, &dependencies);
-    let original_matches: Vec<_> = {
-        let pattern = format!("^{}$", &original_patterns[&0]);
-        let re = Regex::new(&pattern).unwrap();
-        lines.clone().filter(|s| re.is_match(s)).collect()
-    };
-    println!("{}", original_matches.len());
-    println!("{:?}", original_patterns);
+    // Whole language has ~2M words, so test for that with a regex
+    let re = build_re(0, &rules, &dependencies);
+    let re = format!("^{}$", &re[&0]);
+    let re = Regex::new(&re).unwrap();
+    println!(
+        "I count {} kosher examples",
+        examples.iter().filter(|s| re.is_match(&s)).count()
+    );
 
-    rules.insert(8, Rule::OneOrMore(42));
-    rules.insert(11, Rule::Balanced(42, 31));
-    let new_patterns = build_patterns(0, &rules, &dependencies);
-    let candidate_larger_matches: Vec<_> = {
-        let re = Regex::new(&format!("^{}$", &new_patterns[&0])).unwrap();
-        println!("{}", re.as_str());
-        lines
-            .filter_map(|s| {
-                re.captures(s)
-                    .map(|c| c.name(&"balanced").unwrap().as_str())
-            })
-            .collect()
-    };
+    let patterns_42 = build_languages(42, &rules, &dependencies);
+    let patterns_31 = build_languages(31, &rules, &dependencies);
 
-    let mut pattern = String::new();
-    for i in 1..=100 {
-        // candidate_larger_matches looks for stuff in a language of the form A*B*:
-        // but we want the sublanguage containing the same number of As as Bs, i.e. the union
-        // over natural numbers i of A^iB^i.
-        // Try some small values of i:
-        pattern = format!(
-            "^{}{}{}$",
-            original_patterns[&42], pattern, original_patterns[&31]
-        );
-        let re = Regex::new(&pattern).unwrap();
-        println!(
-            "Match {} times on both sides: {}",
-            i,
-            candidate_larger_matches
-                .iter()
-                .filter(|s| re.is_match(s))
-                .count()
-        );
+    let l42 = patterns_42[&42].as_lang().unwrap();
+    let l31 = patterns_31[&31].as_lang().unwrap();
+    println!("lang42: {} words {:?}", l42.len(), l42);
+    println!("lang31: {} words {:?}", l42.len(), l31);
+    println!(
+        "So lang0 = 42 42 31 contains {} words",
+        l42.len() * l42.len() * l31.len()
+    );
+    println!("Intersection: {:?} (hooray!)", l42.intersection(&l31));
+    println!(
+        "New ruleset accepts {} words",
+        examples
+            .iter()
+            .filter(|s| valid_new_ruleset(s, l42, l31))
+            .count()
+    );
+}
+
+fn valid_new_ruleset(s: &str, l42: &HashSet<String>, l31: &HashSet<String>) -> bool {
+    let mut count42 = 0;
+    let mut count31 = 0;
+    let mut i = 0;
+    // fortunately, these are ascii strings so can just fiddle with each byte
+    while i + 8 <= s.len() {
+        if l42.contains(&s[i..(i + 8)]) {
+            count42 += 1;
+            i += 8;
+        } else {
+            break;
+        }
     }
+    while i + 8 <= s.len() {
+        if l31.contains(&s[i..(i + 8)]) {
+            count31 += 1;
+            i += 8;
+        } else {
+            break;
+        }
+    }
+    i == s.len() && count42 > count31 && count31 >= 1
 }
 
 #[derive(Debug)]
@@ -63,8 +78,6 @@ enum Rule {
     Literal(char),
     ChoiceOfSequences(Vec<Vec<usize>>),
     Sequence(Vec<usize>),
-    OneOrMore(usize),
-    Balanced(usize, usize),
 }
 
 impl Rule {
@@ -126,44 +139,133 @@ fn dependency_graph(rules: &HashMap<usize, Rule>) -> GraphMap<usize, (), Directe
                         g.add_edge(*index, *dependant_index, ());
                     });
             }
-            Rule::OneOrMore(other_index) => {
-                g.add_edge(*index, *other_index, ());
-            }
-            Rule::Balanced(a, b) => {
-                g.add_edge(*index, *a, ());
-                g.add_edge(*index, *b, ());
-            }
         }
     }
     g
 }
 
-fn build_patterns(
+#[derive(Debug, Clone)]
+enum Pattern {
+    Concatenation(Vec<Rc<Pattern>>),
+    OneOfPattern(Vec<Rc<Pattern>>),
+    Language(HashSet<String>),
+}
+
+impl Pattern {
+    fn as_lang(&self) -> Option<&HashSet<String>> {
+        match self {
+            Pattern::Language(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    fn get_languages(patterns: &Vec<Rc<Pattern>>) -> Option<Vec<&HashSet<String>>> {
+        let languages: Vec<_> = patterns
+            .iter()
+            .filter_map(|p| {
+                if let Pattern::Language(s) = &**p {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if languages.len() == patterns.len() {
+            Some(languages)
+        } else {
+            None
+        }
+    }
+}
+
+fn build_languages(
+    start_index: usize,
+    rules: &HashMap<usize, Rule>,
+    dependencies: &GraphMap<usize, (), Directed>,
+) -> HashMap<usize, Rc<Pattern>> {
+    let mut patterns = HashMap::<usize, Rc<Pattern>>::new();
+    depth_first_search(dependencies, Some(start_index), |event| match event {
+        Finish(index, _) => {
+            let pattern_for_seq = |seq: &Vec<usize>| {
+                let ps: Vec<_> = seq.iter().map(|i| patterns[i].clone()).collect();
+                if ps.len() == 1 {
+                    try_simplify((*ps[0]).clone())
+                } else {
+                    try_simplify(Pattern::Concatenation(ps))
+                }
+            };
+            let pattern = match &rules[&index] {
+                Rule::Literal(c) => {
+                    let mut set = HashSet::new();
+                    set.insert(c.to_string());
+                    Pattern::Language(set)
+                }
+                Rule::ChoiceOfSequences(seqs) => try_simplify(Pattern::OneOfPattern(
+                    seqs.iter().map(pattern_for_seq).map(Rc::new).collect(),
+                )),
+                Rule::Sequence(seq) => pattern_for_seq(seq),
+            };
+            // println!(
+            //     "Rule {}: {:?} generates {:?}",
+            //     index, &rules[&index], pattern
+            // );
+            patterns.insert(index, Rc::new(pattern));
+        }
+        _ => (),
+    });
+    patterns
+}
+
+fn try_simplify(pattern: Pattern) -> Pattern {
+    match &pattern {
+        Pattern::Concatenation(patterns) => {
+            if let Some(languages) = Pattern::get_languages(patterns) {
+                let mut language = HashSet::new();
+                language.insert(String::new());
+                let language = languages.iter().fold(language, |l, r| {
+                    l.iter()
+                        .cartesian_product(r.iter())
+                        .map(|(a, b)| format!("{}{}", a, b))
+                        .collect()
+                });
+                return Pattern::Language(language);
+            }
+        }
+        Pattern::OneOfPattern(patterns) => {
+            if let Some(languages) = Pattern::get_languages(patterns) {
+                let mut language = HashSet::new();
+                languages
+                    .iter()
+                    .for_each(|l| language.extend(l.iter().cloned()));
+                return Pattern::Language(language);
+            }
+        }
+        Pattern::Language(_) => {}
+    }
+    pattern
+}
+
+fn build_re(
     start_index: usize,
     rules: &HashMap<usize, Rule>,
     dependencies: &GraphMap<usize, (), Directed>,
 ) -> HashMap<usize, String> {
-    let mut patterns = HashMap::<usize, String>::new();
+    let mut patterns = HashMap::new();
     depth_first_search(dependencies, Some(start_index), |event| match event {
         Finish(index, _) => {
+            let pattern_for_seq = |seq: &Vec<usize>| join(seq.iter().map(|i| &patterns[i]), "");
             let pattern = match &rules[&index] {
-                Rule::Literal(c) => String::from(*c),
-                Rule::Sequence(seq) => join(seq.iter().map(|i| &patterns[i]), ""),
+                Rule::Literal(c) => c.to_string(),
                 Rule::ChoiceOfSequences(choices) => {
-                    let fmt_seq = |seq: &Vec<usize>| join(seq.iter().map(|i| &patterns[i]), "");
-                    format!("({})", join(choices.iter().map(fmt_seq), "|"))
+                    let choices = choices.iter().map(pattern_for_seq);
+                    format!("({})", join(choices, "|"))
                 }
-                Rule::OneOrMore(other) => {
-                    format!("({})+", patterns.get(other).unwrap())
-                }
-                Rule::Balanced(a, b) => {
-                    format!(
-                        "(?P<balanced>({})+({})+)",
-                        patterns.get(a).unwrap(),
-                        patterns.get(b).unwrap()
-                    )
-                }
+                Rule::Sequence(seq) => pattern_for_seq(seq),
             };
+            // println!(
+            //     "Rule {}: {:?} generates {:?}",
+            //     index, &rules[&index], pattern
+            // );
             patterns.insert(index, pattern);
         }
         _ => (),
@@ -193,103 +295,13 @@ aaaabbb";
         let mut lines = input.split("\n");
         let rules = read_rules(&mut lines);
         let dependencies = dependency_graph(&rules);
-        let patterns = build_patterns(0, &rules, &dependencies);
-        println!("{:?}", patterns);
-        let pattern = format!("^{}$", patterns[&0]);
-        println!("{}", pattern);
-        let re = Regex::new(&pattern).unwrap();
-        assert!(re.is_match("ababbb"));
-        assert!(!re.is_match("bababa"));
-        assert!(re.is_match("abbbab"));
-        assert!(!re.is_match("aaabbb"));
-        assert!(!re.is_match("aaaabbb"));
-    }
-
-    #[test]
-    fn example_two() {
-        let input = "\
-42: 9 14 | 10 1
-9: 14 27 | 1 26
-10: 23 14 | 28 1
-1: \"a\"
-11: 42 31
-5: 1 14 | 15 1
-19: 14 1 | 14 14
-12: 24 14 | 19 1
-16: 15 1 | 14 14
-31: 14 17 | 1 13
-6: 14 14 | 1 14
-2: 1 24 | 14 4
-0: 8 11
-13: 14 3 | 1 12
-15: 1 | 14
-17: 14 2 | 1 7
-23: 25 1 | 22 14
-28: 16 1
-4: 1 1
-20: 14 14 | 1 15
-3: 5 14 | 16 1
-27: 1 6 | 14 18
-14: \"b\"
-21: 14 1 | 1 14
-25: 1 1 | 1 14
-22: 14 14
-8: 42
-26: 14 22 | 1 20
-18: 15 15
-7: 14 5 | 1 21
-24: 14 1
-
-abbbbbabbbaaaababbaabbbbabababbbabbbbbbabaaaa
-bbabbbbaabaabba
-babbbbaabbbbbabbbbbbaabaaabaaa
-aaabbbbbbaaaabaababaabababbabaaabbababababaaa
-bbbbbbbaaaabbbbaaabbabaaa
-bbbababbbbaaaaaaaabbababaaababaabab
-ababaaaaaabaaab
-ababaaaaabbbaba
-baabbaaaabbaaaababbaababb
-abbbbabbbbaaaababbbbbbaaaababb
-aaaaabbaabaaaaababaa
-aaaabbaaaabbaaa
-aaaabbaabbaaaaaaabbbabbbaaabbaabaaa
-babaaabbbaaabaababbaabababaaab
-aabbbbbaabbbaaaaaabbbbbababaaaaabbaaabba";
-
-        let mut lines = input.split("\n");
-        let mut rules = read_rules(&mut lines);
-        let dependencies = dependency_graph(&rules);
-        let patterns = build_patterns(0, &rules, &dependencies);
-        let pattern = format!("^{}$", &patterns[&0]);
-        let re = Regex::new(&pattern).unwrap();
-
-        assert_eq!(lines.clone().filter(|s| re.is_match(s)).count(), 3);
-
-        println!("11: 42 31 | 42 11 31");
-        println!("42: {}", patterns[&42]);
-        println!("31: {}", patterns[&31]);
-        rules.insert(8, Rule::OneOrMore(42));
-        rules.insert(11, Rule::Balanced(42, 31));
-        let patterns = build_patterns(0, &rules, &dependencies);
-        let re = Regex::new(&patterns[&0]).unwrap();
-        let expected_matches: Vec<_> = "\
-bbabbbbaabaabba
-babbbbaabbbbbabbbbbbaabaaabaaa
-aaabbbbbbaaaabaababaabababbabaaabbababababaaa
-bbbbbbbaaaabbbbaaabbabaaa
-bbbababbbbaaaaaaaabbababaaababaabab
-ababaaaaaabaaab
-ababaaaaabbbaba
-baabbaaaabbaaaababbaababb
-abbbbabbbbaaaababbbbbbaaaababb
-aaaaabbaabaaaaababaa
-aaaabbaabbaaaaaaabbbabbbaaabbaabaaa
-aabbbbbaabbbaaaaaabbbbbababaaaaabbaaabba"
-            .lines()
-            .collect();
-        let larger_matches: Vec<_> = lines.filter(|s| re.is_match(s)).collect();
-        for e in expected_matches {
-            assert!(larger_matches.contains(&e));
+        let patterns = build_languages(0, &rules, &dependencies);
+        if let Pattern::Language(l) = &*patterns[&0] {
+            assert!(l.contains("ababbb"));
+            assert!(!l.contains("bababa"));
+            assert!(l.contains("abbbab"));
+            assert!(!l.contains("aaabbb"));
+            assert!(!l.contains("aaaabbb"));
         }
     }
 }

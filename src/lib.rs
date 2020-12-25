@@ -1,7 +1,15 @@
+#[macro_use(lazy_static)]
+extern crate lazy_static;
+
+#[macro_use(scan_fmt)]
+extern crate scan_fmt;
+
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::{BufRead, Read};
+
+pub mod lib20;
 
 // Lots of unwraps here---naughty helpers!
 

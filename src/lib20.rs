@@ -206,6 +206,14 @@ impl fmt::Display for Tile {
     }
 }
 
+pub fn read_tiles<'a>(mut input: impl Iterator<Item = &'a str>) -> Vec<Tile> {
+    let mut tiles = Vec::new();
+    while let Some(t) = Tile::read(&mut input) {
+        tiles.push(t);
+    }
+    tiles
+}
+
 #[derive(TryFromPrimitive, EnumIter, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RotoReflection {
@@ -357,7 +365,7 @@ impl<'a, T> Iterator for Pairs<'a, T> {
 
 pub struct Composition<'a> {
     tiles: Array2D<Option<ArrangedTile<'a>>>,
-    ids: HashSet<usize>,
+    pub ids: HashSet<usize>,
 }
 
 impl<'a> Composition<'a> {
@@ -386,6 +394,12 @@ impl<'a> Composition<'a> {
     }
 
     pub fn clear(&mut self, x: usize, y: usize) {
+        println!(
+            "Remove {} from ({},{})",
+            self.tiles.get(x, y).unwrap().unwrap().tile.id,
+            x,
+            y
+        );
         self.ids
             .remove(&self.tiles.get(x, y).unwrap().unwrap().tile.id);
         self.tiles.set(x, y, None).unwrap();
@@ -409,7 +423,6 @@ impl<'a> Composition<'a> {
     }
 
     pub fn try_insert(&mut self, t: ArrangedTile<'a>, x: usize, y: usize) -> bool {
-        println!("Try to insert #{} at ({},{})", t.tile.id, x, y);
         for (dir, t2) in self.neighbours(x, y) {
             let e = OrientedEdge {
                 e: dir,
@@ -479,6 +492,37 @@ mod test {
             p,
             vec![(&1, &2), (&1, &3), (&1, &4), (&2, &3), (&2, &4), (&3, &4)]
         );
+    }
+
+    #[test]
+    fn test_edge_sums() {
+        let input = "\
+Tile 2311:
+..##.#..#.
+##..#.....
+#...##..#.
+####.#...#
+##.##.###.
+##...#.###
+.#.#.#..##
+..#....#..
+###...#.#.
+..###..###";
+        let tiles = read_tiles(input.split("\n"));
+        let check = |e, o, v| {
+            assert_eq!(tiles[0].edges.get(&OrientedEdge { e, o }).unwrap(), &v);
+        };
+        use Edge::*;
+        use Orientation::*;
+        check(Top, CW, 0b0011010010);
+        check(Right, CW, 0b0001011001);
+        check(Bottom, CW, 0b1110011100);
+        check(Left, CW, 0b0100111110);
+
+        check(Top, ACW, 0b0100101100);
+        check(Left, ACW, 0b0111110010);
+        check(Bottom, ACW, 0b0011100111);
+        check(Right, ACW, 0b1001101000);
     }
 
     #[test]

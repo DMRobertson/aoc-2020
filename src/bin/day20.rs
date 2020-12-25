@@ -1,27 +1,42 @@
 use aoc_2020::lib20::*;
 use std::fmt;
 
-fn main() {}
+fn main() {
+    // One day I'll work out how to write "an Iterator that yields &str or &String". Until now,
+    // collect and feel dirty.
+    let lines: Vec<_> = aoc_2020::problem_lines().collect();
+    let tiles = read_tiles(lines.iter().map(AsRef::as_ref));
+    let tiles_by_edges = build_edge_lookup(&tiles);
+    let c = search_for_composition(&tiles, &tiles_by_edges).unwrap();
+    println!("{}", c.corners());
+}
 
+fn read_tiles<'a>(mut input: impl Iterator<Item = &'a str>) -> Vec<Tile> {
+    let mut tiles = Vec::new();
+    while let Some(t) = Tile::read(&mut input) {
+        tiles.push(t);
+    }
+    tiles
+}
+
+#[derive(Debug)]
 struct Possibilities<'a> {
     x: usize,
     y: usize,
-    options: Vec<ArrangedTile<'a>>,
+    candidate: ArrangedTile<'a>,
+    other_options: Vec<ArrangedTile<'a>>,
 }
 
 impl fmt::Display for Possibilities<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.options.iter().last() {
-            None => write!(f, "At ({},{}) out of alternatives", self.x, self.y),
-            Some(last) => write!(
-                f,
-                "At ({},{}) consider {} (1 of {} alternatives)",
-                self.x,
-                self.y,
-                last,
-                self.options.len()
-            ),
-        }
+        write!(
+            f,
+            "At ({},{}) considering {} with {} other alternatives",
+            self.x,
+            self.y,
+            self.candidate,
+            self.other_options.len()
+        )
     }
 }
 
@@ -48,82 +63,144 @@ fn search_for_composition<'a>(
     // We start by guessing which tile and which orientation could be in the top-left corner.
     // No cleverness here---try them all (8N possibilities).
     let mut dfs_stack = Vec::new();
+    let mut options: Vec<ArrangedTile> = tiles.iter().flat_map(|t| t.arrangements()).collect();
     dfs_stack.push(Possibilities {
         x: 0,
         y: 0,
-        options: tiles.iter().flat_map(|t| t.arrangements()).collect(),
+        // Think we can do better here. If there's a solution where the top left has orientation
+        // A, then VFlipCw90 that solution to get another solution with the same tile in the top
+        // left but a differnet orientation. So that's a factor of 2 to find somewhere.
+        candidate: options.pop().unwrap(),
+        other_options: options,
     });
 
     while !dfs_stack.is_empty() {
+        println!("Stack:");
+        let start = dfs_stack.len().saturating_sub(4);
+        dfs_stack
+            .iter()
+            .enumerate()
+            .skip(start)
+            .for_each(|(i, x)| println!("  {:3}] {}", i, x));
+
         // At first I just looked at `head` in place, but the borrow checker wasn't happy.
         // So move its ownership to this function while we investigate it.
-        println!("Stack:");
-        dfs_stack.iter().for_each(|x| println!("    {}", x));
-
-        let mut head = dfs_stack.pop().unwrap();
         // Pick a tile arrangement out of our options for this square and see if it fits.
-        let t = head.options.pop();
-        if t.is_none() {
-            println!("This didn't work. Pop!");
-            // If we're out of options, then this tile isn't right.
-            // Remove it from the grid, then we'll head back up the dfs tree in the next iteration.
-            c.clear(head.x, head.y);
-            continue;
-        }
-        let t = t.unwrap();
-        // Try inserting t here. Does it cause any problems?
-        if c.try_insert(t, head.x, head.y) {
-            println!("I **CAN** place {} here", t);
-            // If not, what square should we consider next?
-            let cell = next_cell(head.x, head.y, size);
-            // Maybe we've considered all square and completed a composition of tiles.
-            if cell.is_none() {
-                println!("We're done!");
+        // Try inserting the tile. Does it cause any problems?
+        let outcome = try_insertion(
+            dfs_stack.iter_mut().last().unwrap(),
+            &mut c,
+            size,
+            &edge_lookup,
+        );
+        match outcome {
+            InsertionOutcome::SuccessComplete => println!("Yes! We're done!"),
+            InsertionOutcome::SuccessDescend(_) => println!("Yes. Descend to another search level"),
+            InsertionOutcome::InsertionWouldClash => {
+                println!("No: insertion would clash with tiles we've already tried")
+            }
+            InsertionOutcome::SuccessButNoOptions => {
+                println!("No: insertion would work but we couldn't place a next tile.")
+            }
+        };
+
+        match outcome {
+            InsertionOutcome::SuccessButNoOptions | InsertionOutcome::InsertionWouldClash => {
+                // println!("stack contains {} things", dfs_stack.len());
+                while let Some(mut head) = dfs_stack.pop() {
+                    // println!("stack now contains {} things", dfs_stack.len());
+                    // println!("head we're considering is {}", head);
+                    c.clear(head.x, head.y);
+                    if let Some(t) = head.other_options.pop() {
+                        head.candidate = t;
+                        dfs_stack.push(head);
+                        break;
+                    }
+                }
+                // match dfs_stack.last() {
+                //     None => println!("stack now empty"),
+                //     Some(x) => println!("stack now has {} things, head {}", dfs_stack.len(), x),
+                // }
+            }
+            InsertionOutcome::SuccessDescend(p) => {
+                dfs_stack.push(p);
+            }
+            InsertionOutcome::SuccessComplete => {
                 return Some(c);
             }
-            // But, more likely, we have to consider extra cells and descend down the dfs tree.
-            let (next_x, next_y, next_glue_edge) = cell.unwrap();
-            let (src_x, src_y) = step(next_glue_edge.e, next_x, next_y);
-            let edge_sum = c
-                .get_edge_sum(src_x, src_y, next_glue_edge.opposite())
-                .unwrap();
-            println!(
-                "Need to glue ({},{}) edge {} to something with value {}",
-                src_x,
-                src_y,
-                next_glue_edge.opposite(),
-                edge_sum
-            );
-
-            const EMPTY: [(OrientedEdge, &Tile); 0] = [];
-            let options = match edge_lookup.get(&edge_sum) {
-                Some(v) => v.as_slice(),
-                None => &EMPTY,
-            };
-            let options = options.iter().filter(|(_, t)| !c.contains(t.id));
-            println!("Our options are:");
-            for (e, t) in options.clone() {
-                println!("    #{} {}", t.id, e);
-            }
-
-            dfs_stack.push(head);
-
-            let options: Vec<_> = options
-                .map(|(e, t)| ArrangedTile::such_that(*t, *e, next_glue_edge))
-                .collect();
-            if !options.is_empty() {
-                dfs_stack.push(Possibilities {
-                    x: next_x,
-                    y: next_y,
-                    options,
-                });
-            }
-        } else {
-            println!("I can't place {} here", t);
-            dfs_stack.push(head);
         }
     }
     None
+}
+
+enum InsertionOutcome<'a> {
+    SuccessComplete,
+    SuccessDescend(Possibilities<'a>),
+    InsertionWouldClash,
+    SuccessButNoOptions,
+}
+
+fn try_insertion<'a, 'b>(
+    head: &'b mut Possibilities<'a>,
+    c: &'b mut Composition<'a>,
+    size: usize,
+    edge_lookup: &EdgeLookup<'a>,
+) -> InsertionOutcome<'a> {
+    println!(
+        "Can we place {:?} at ({},{})?",
+        head.candidate, head.x, head.y
+    );
+
+    if c.try_insert(head.candidate, head.x, head.y) {
+        // If not, what square should we consider next?
+        let cell = next_cell(head.x, head.y, size);
+        // Maybe we've considered all square and completed a composition of tiles.
+        if cell.is_none() {
+            return InsertionOutcome::SuccessComplete;
+        }
+
+        // But, more likely, we have to consider extra cells and descend down the dfs tree.
+        let (next_x, next_y, next_glue_edge) = cell.unwrap();
+        let (src_x, src_y) = step(next_glue_edge.e, next_x, next_y);
+        let edge_sum = c
+            .get_edge_sum(src_x, src_y, next_glue_edge.opposite())
+            .unwrap();
+        println!(
+            "Yes. To continue, we need to glue ({},{}) edge {} to something with value {}. \
+            Options:",
+            src_x,
+            src_y,
+            next_glue_edge.opposite(),
+            edge_sum
+        );
+
+        const EMPTY: [(OrientedEdge, &Tile); 0] = [];
+        let options = match edge_lookup.get(&edge_sum) {
+            Some(v) => v.as_slice(),
+            None => &EMPTY,
+        };
+        let mut options: Vec<_> = options
+            .iter()
+            .filter(|(_, t)| !c.contains(t.id))
+            .inspect(|(e, t)| println!("    #{} {}", t.id, e))
+            .map(|(e, t)| ArrangedTile::such_that(*t, *e, next_glue_edge))
+            .collect();
+
+        if !options.is_empty() {
+            let candidate = options.pop().unwrap();
+            let p = Possibilities {
+                x: next_x,
+                y: next_y,
+                candidate,
+                other_options: options,
+            };
+            InsertionOutcome::SuccessDescend(p)
+        } else {
+            InsertionOutcome::SuccessButNoOptions
+        }
+    } else {
+        InsertionOutcome::InsertionWouldClash
+    }
 }
 
 fn next_cell(x: usize, y: usize, size: usize) -> Option<(usize, usize, OrientedEdge)> {
@@ -166,31 +243,52 @@ fn step(e: Edge, x: usize, y: usize) -> (usize, usize) {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::collections::HashSet;
+    use std::iter::FromIterator;
+
+    #[test]
+    fn test_edge_lookup() {
+        let input = EXAMPLE_ONE.split("\n");
+        let tiles1 = read_tiles(input.clone());
+        let tiles_by_edges1 = build_edge_lookup(&tiles1);
+
+        let tiles2 = read_tiles(input);
+        let tiles_by_edges2 = build_edge_lookup(&tiles2);
+
+        assert_eq!(tiles_by_edges1.len(), tiles_by_edges2.len());
+        assert_eq!(
+            HashSet::<u16>::from_iter(tiles_by_edges1.keys().cloned()),
+            HashSet::<u16>::from_iter(tiles_by_edges2.keys().cloned())
+        );
+        for k in tiles_by_edges1.keys() {
+            let v1 = tiles_by_edges1.get(k).unwrap();
+            let v2 = tiles_by_edges1.get(k).unwrap();
+            assert_eq!(v1.len(), v2.len());
+
+            assert_eq!(
+                HashSet::<(OrientedEdge, usize)>::from_iter(
+                    v1.iter().cloned().map(|(e, t)| (e, t.id))
+                ),
+                HashSet::<(OrientedEdge, usize)>::from_iter(
+                    v2.iter().cloned().map(|(e, t)| (e, t.id))
+                )
+            );
+        }
+    }
 
     #[test]
     fn example_1() {
-        use Edge::*;
-        use Orientation::*;
-        let mut input = EXAMPLE_ONE.split("\n");
-        let mut tiles = Vec::new();
-        while let Some(t) = Tile::read(&mut input) {
-            tiles.push(t);
-        }
-        let t = tiles.first().unwrap();
-        // TODO move this checking into lib2
-        let check = |e, o, v| {
-            assert_eq!(t.edges.get(&OrientedEdge { e, o }).unwrap(), &v);
-        };
-        check(Top, CW, 0b0011010010);
-        check(Right, CW, 0b0001011001);
-        check(Bottom, CW, 0b1110011100);
-        check(Left, CW, 0b0100111110);
+        let input = EXAMPLE_ONE.split("\n");
+        let tiles = read_tiles(input);
+        let tiles_by_edges = build_edge_lookup(&tiles);
+        let c = search_for_composition(&tiles, &tiles_by_edges).unwrap();
+        assert_eq!(c.corners(), 20899048083289);
+    }
 
-        check(Top, ACW, 0b0100101100);
-        check(Left, ACW, 0b0111110010);
-        check(Bottom, ACW, 0b0011100111);
-        check(Right, ACW, 0b1001101000);
-
+    #[test]
+    fn example_1_reversed() {
+        let input = EXAMPLE_ONE.split("\n");
+        let tiles: Vec<_> = read_tiles(input).into_iter().rev().collect();
         let tiles_by_edges = build_edge_lookup(&tiles);
         let c = search_for_composition(&tiles, &tiles_by_edges).unwrap();
         assert_eq!(c.corners(), 20899048083289);

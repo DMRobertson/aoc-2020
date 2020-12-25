@@ -177,6 +177,7 @@ mod test {
             tiles.push(t);
         }
         let t = tiles.first().unwrap();
+        // TODO move this checking into lib2
         let check = |e, o, v| {
             assert_eq!(t.edges.get(&OrientedEdge { e, o }).unwrap(), &v);
         };
@@ -190,18 +191,9 @@ mod test {
         check(Bottom, ACW, 0b0011100111);
         check(Right, ACW, 0b1001101000);
 
-        let mut tiles_by_edges = build_edge_lookup(&tiles);
-        println!(
-            "{}",
-            tiles_by_edges.values().map(|x| x.len()).sum::<usize>()
-        );
-        // Each tile will be glued to at least two others
-        tiles_by_edges.retain(|_, v| v.len() >= 2);
-        println!(
-            "{}",
-            tiles_by_edges.values().map(|x| x.len()).sum::<usize>()
-        );
-        search_for_composition(&tiles, &tiles_by_edges);
+        let tiles_by_edges = build_edge_lookup(&tiles);
+        let c = search_for_composition(&tiles, &tiles_by_edges).unwrap();
+        assert_eq!(c.corners(), 20899048083289);
     }
 
     const EXAMPLE_ONE: &'static str = "\

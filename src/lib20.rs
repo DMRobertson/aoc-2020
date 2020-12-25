@@ -3,6 +3,7 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use array2d::Array2D;
+use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fmt;
@@ -276,7 +277,7 @@ pub struct ArrangedTile<'a> {
 }
 
 impl<'a> ArrangedTile<'a> {
-    fn edge(&self, edge: OrientedEdge) -> u16 {
+    fn edge_sum(&self, edge: OrientedEdge) -> u16 {
         // Work out which of the original tile's oriented edges we want.
         // Think of RotoReflection as the group A4, acting on the oriented edges.
         // We want to apply the inverse of self.arrangement to the edge we are interested in to
@@ -307,14 +308,14 @@ impl fmt::Debug for ArrangedTile<'_> {
             f,
             "#{}(T{}/{} R{}/{} B{}/{} L{}/{})",
             self.tile.id,
-            self.edge(ORIENTED_EDGES[0]),
-            self.edge(ORIENTED_EDGES[1]),
-            self.edge(ORIENTED_EDGES[2]),
-            self.edge(ORIENTED_EDGES[3]),
-            self.edge(ORIENTED_EDGES[4]),
-            self.edge(ORIENTED_EDGES[5]),
-            self.edge(ORIENTED_EDGES[6]),
-            self.edge(ORIENTED_EDGES[7]),
+            self.edge_sum(ORIENTED_EDGES[0]),
+            self.edge_sum(ORIENTED_EDGES[1]),
+            self.edge_sum(ORIENTED_EDGES[2]),
+            self.edge_sum(ORIENTED_EDGES[3]),
+            self.edge_sum(ORIENTED_EDGES[4]),
+            self.edge_sum(ORIENTED_EDGES[5]),
+            self.edge_sum(ORIENTED_EDGES[6]),
+            self.edge_sum(ORIENTED_EDGES[7]),
         )
     }
 }
@@ -381,7 +382,7 @@ impl<'a> Composition<'a> {
 
     pub fn get_edge_sum(&self, x: usize, y: usize, e: OrientedEdge) -> Option<u16> {
         let t = self.tiles.get(x, y).unwrap();
-        t.map(|t| t.edge(e))
+        t.map(|t| t.edge_sum(e))
     }
 
     pub fn clear(&mut self, x: usize, y: usize) {
@@ -410,10 +411,14 @@ impl<'a> Composition<'a> {
     pub fn try_insert(&mut self, t: ArrangedTile<'a>, x: usize, y: usize) -> bool {
         println!("Try to insert #{} at ({},{})", t.tile.id, x, y);
         for (dir, t2) in self.neighbours(x, y) {
-            println!("    Neighbour #{} at {:?} ({},{}) ", t2.tile.id, dir, x, y);
-            // TODO: test to see if t and neighbour agree on their common edge
+            let e = OrientedEdge {
+                e: dir,
+                o: Orientation::CW,
+            };
+            if t.edge_sum(e) != t2.edge_sum(e.opposite()) {
+                return false;
+            }
         }
-
         self.ids.insert(t.tile.id);
         self.tiles.set(x, y, Some(t)).unwrap();
         true
@@ -422,6 +427,15 @@ impl<'a> Composition<'a> {
     pub fn contains(&self, id: usize) -> bool {
         // Guess you could just brute force the lookup too
         self.ids.contains(&id)
+    }
+
+    pub fn corners(&self) -> usize {
+        let x = [0, self.tiles.num_columns() - 1];
+        let y = [0, self.tiles.num_rows() - 1];
+        x.iter()
+            .cartesian_product(y.iter())
+            .map(|(x, y)| self.tiles.get(*x, *y).unwrap().unwrap().tile.id)
+            .product()
     }
 }
 
@@ -445,6 +459,11 @@ pub fn build_edge_lookup(tiles: &[Tile]) -> EdgeLookup {
             v.push((*e, t));
         }
     }
+
+    // If there's an edge sum that only appears once, we can't use it to glue tiles together.
+    // So throw it away!
+    map.retain(|_, v| v.len() >= 2);
+
     map
 }
 

@@ -3,10 +3,7 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use array2d::Array2D;
-use itertools::Itertools;
-use petgraph::graph::NodeIndex;
-use petgraph::Undirected;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fmt;
 use std::ops::Not;
@@ -23,7 +20,7 @@ pub enum Edge {
 }
 
 impl Edge {
-    fn opposite(&self) -> Self {
+    pub fn opposite(&self) -> Self {
         use Edge::*;
         match self {
             Top => Bottom,
@@ -74,6 +71,12 @@ impl OrientedEdge {
     }
 }
 
+impl fmt::Display for OrientedEdge {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}{:?}", self.e, self.o)
+    }
+}
+
 const ORIENTED_EDGES: [OrientedEdge; 8] = [
     OrientedEdge {
         e: Edge::Top,
@@ -111,7 +114,7 @@ const ORIENTED_EDGES: [OrientedEdge; 8] = [
 
 #[derive(Debug)]
 pub struct Tile {
-    id: usize,
+    pub id: usize,
     grid: Grid,
     pub edges: HashMap<OrientedEdge, u16>,
 }
@@ -202,7 +205,7 @@ impl fmt::Display for Tile {
     }
 }
 
-#[derive(EnumIter, Clone, Copy, Debug)]
+#[derive(TryFromPrimitive, EnumIter, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RotoReflection {
     None = 0,
@@ -233,6 +236,19 @@ impl RotoReflection {
         let e = Edge::try_from((index + cw_quarters) % 4).unwrap();
         OrientedEdge { e, o }
     }
+
+    fn such_that(src: OrientedEdge, dst: OrientedEdge) -> Self {
+        let flip = src.o != dst.o;
+        let diff_mod_4 = |x, y| if y >= x { y - x } else { y + 4 - x };
+
+        if !flip {
+            let turns = diff_mod_4(src.e as u8, dst.e as u8) % 4;
+            RotoReflection::try_from(turns).unwrap()
+        } else {
+            let turns = diff_mod_4(src.e.vflip() as u8, dst.e as u8) % 4;
+            RotoReflection::try_from(4 + turns).unwrap()
+        }
+    }
 }
 
 impl Not for RotoReflection {
@@ -253,13 +269,13 @@ impl Not for RotoReflection {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ArrangedTile<'a> {
     tile: &'a Tile,
-    arrangement: RotoReflection,
+    pub arrangement: RotoReflection,
 }
 
-impl ArrangedTile<'_> {
+impl<'a> ArrangedTile<'a> {
     fn edge(&self, edge: OrientedEdge) -> u16 {
         // Work out which of the original tile's oriented edges we want.
         // Think of RotoReflection as the group A4, acting on the oriented edges.
@@ -269,9 +285,23 @@ impl ArrangedTile<'_> {
         let orig_edge = inverse.apply(&edge);
         self.tile.edges[&orig_edge]
     }
+
+    pub fn such_that(tile: &'a Tile, e: OrientedEdge, desired_e: OrientedEdge) -> Self {
+        // Need to find a RotoReflection r such that r.apply(e) == desired_e
+        Self {
+            tile,
+            arrangement: RotoReflection::such_that(e, desired_e),
+        }
+    }
 }
 
 impl fmt::Display for ArrangedTile<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{} ({:?})", self.tile.id, self.arrangement,)
+    }
+}
+
+impl fmt::Debug for ArrangedTile<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -288,8 +318,6 @@ impl fmt::Display for ArrangedTile<'_> {
         )
     }
 }
-
-pub type Graph = petgraph::graph::Graph<usize, (OrientedEdge, OrientedEdge), Undirected>;
 
 pub struct Pairs<'a, T> {
     max: usize,
@@ -326,38 +354,16 @@ impl<'a, T> Iterator for Pairs<'a, T> {
     }
 }
 
-pub fn build_graph(tiles: &[Tile]) -> (Graph, Vec<NodeIndex<u32>>) {
-    // Build a graph whose vertices are tiles ids.
-    // We add an edge
-    //     u --- (e1, e2) -- v
-    // if u's e1 edge is equal to v's e2 edge.
-    let mut g = Graph::new_undirected();
-
-    let node_handles: Vec<_> = tiles
-        .iter()
-        .enumerate()
-        .map(|(i, _)| g.add_node(i))
-        .collect();
-    let handles: Vec<_> = tiles.iter().zip(node_handles.iter().cloned()).collect();
-    for ((u_tile, u_index), (v_tile, v_index)) in Pairs::new(&handles) {
-        let edge_combinations = u_tile.edges.iter().cartesian_product(v_tile.edges.iter());
-        for ((e1, sum1), (e2, sum2)) in edge_combinations {
-            if sum1 == sum2 {
-                g.add_edge(*u_index, *v_index, (*e1, *e2));
-            }
-        }
-    }
-    (g, node_handles)
-}
-
 pub struct Composition<'a> {
     tiles: Array2D<Option<ArrangedTile<'a>>>,
+    ids: HashSet<usize>,
 }
 
 impl<'a> Composition<'a> {
     pub fn new(width: usize, height: usize) -> Self {
         Self {
             tiles: Array2D::filled_with(None, width, height),
+            ids: HashSet::new(),
         }
     }
 
@@ -373,7 +379,14 @@ impl<'a> Composition<'a> {
         }
     }
 
+    pub fn get_edge_sum(&self, x: usize, y: usize, e: OrientedEdge) -> Option<u16> {
+        let t = self.tiles.get(x, y).unwrap();
+        t.map(|t| t.edge(e))
+    }
+
     pub fn clear(&mut self, x: usize, y: usize) {
+        self.ids
+            .remove(&self.tiles.get(x, y).unwrap().unwrap().tile.id);
         self.tiles.set(x, y, None).unwrap();
     }
 
@@ -400,8 +413,15 @@ impl<'a> Composition<'a> {
             println!("    Neighbour #{} at {:?} ({},{}) ", t2.tile.id, dir, x, y);
             // TODO: test to see if t and neighbour agree on their common edge
         }
+
+        self.ids.insert(t.tile.id);
         self.tiles.set(x, y, Some(t)).unwrap();
         true
+    }
+
+    pub fn contains(&self, id: usize) -> bool {
+        // Guess you could just brute force the lookup too
+        self.ids.contains(&id)
     }
 }
 
@@ -413,6 +433,19 @@ pub fn sqrt(n: usize) -> Option<usize> {
     } else {
         None
     }
+}
+
+pub type EdgeLookup<'a> = HashMap<u16, Vec<(OrientedEdge, &'a Tile)>>;
+
+pub fn build_edge_lookup(tiles: &[Tile]) -> EdgeLookup {
+    let mut map = HashMap::new();
+    for t in tiles {
+        for (e, value) in t.edges.iter() {
+            let v = map.entry(*value).or_insert(Vec::new());
+            v.push((*e, t));
+        }
+    }
+    map
 }
 
 #[cfg(test)]
@@ -451,14 +484,38 @@ mod test {
             (VFlipCW180, "#0(T2/256 R16/32 B8/64 L4/128)"),
             (VFlipCW270, "#0(T4/128 R2/256 B16/32 L8/64)"),
         ] {
-            assert_eq!(
-                ArrangedTile {
-                    tile: &t,
-                    arrangement: rr
-                }
-                .to_string(),
-                expectation
-            );
+            let a = ArrangedTile {
+                tile: &t,
+                arrangement: rr,
+            };
+            assert_eq!(format!("{:?}", a), expectation);
         }
+    }
+
+    #[test]
+    fn test_such_that() {
+        use Edge::*;
+        use Orientation::*;
+        use RotoReflection::*;
+        let check = |a, b, c, d, v| {
+            assert_eq!(
+                RotoReflection::such_that(OrientedEdge { e: a, o: b }, OrientedEdge { e: c, o: d }),
+                v
+            )
+        };
+        check(Top, CW, Top, CW, None);
+        check(Right, CW, Top, CW, CW270);
+        check(Top, CW, Right, CW, CW90);
+        check(Bottom, ACW, Top, ACW, CW180);
+        check(Left, ACW, Bottom, ACW, CW270);
+        check(Right, ACW, Left, ACW, CW180);
+
+        check(Top, CW, Bottom, ACW, VFlip);
+        check(Top, CW, Top, ACW, VFlipCW180);
+        check(Left, CW, Left, ACW, VFlip);
+        check(Right, CW, Right, ACW, VFlip);
+        check(Right, CW, Left, ACW, VFlipCW180);
+        check(Left, CW, Bottom, ACW, VFlipCW270);
+        check(Bottom, ACW, Left, CW, VFlipCW270);
     }
 }

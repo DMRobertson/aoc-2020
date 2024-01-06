@@ -252,10 +252,24 @@ impl RotoReflection {
 
         if !flip {
             let turns = diff_mod_4(src.e as u8, dst.e as u8) % 4;
-            RotoReflection::try_from(turns).unwrap()
+            Self::try_from(turns).unwrap()
         } else {
             let turns = diff_mod_4(src.e.vflip() as u8, dst.e as u8) % 4;
-            RotoReflection::try_from(4 + turns).unwrap()
+            Self::try_from(4 + turns).unwrap()
+        }
+    }
+
+    fn transform(&self, u: usize, v: usize, size: usize) -> (usize, usize) {
+        let size = size - 1;
+        match self {
+            RotoReflection::None => (u, v),
+            RotoReflection::CW90 => (size - v, u),
+            RotoReflection::CW180 => (size - u, size - v),
+            RotoReflection::CW270 => (v, size - u),
+            RotoReflection::VFlip => (u, size - v),
+            RotoReflection::VFlipCW90 => (v, u),
+            RotoReflection::VFlipCW180 => (size - u, v),
+            RotoReflection::VFlipCW270 => (size - v, size - u),
         }
     }
 }
@@ -449,6 +463,45 @@ impl<'a> Composition<'a> {
             .cartesian_product(y.iter())
             .map(|(x, y)| self.tiles.get(*x, *y).unwrap().unwrap().tile.id)
             .product()
+    }
+
+    pub fn assemble(&self) -> Array2D<bool> {
+        let width = self.tiles.num_columns() * 8;
+        let height = self.tiles.num_rows() * 8;
+        let mut image = Array2D::filled_with(false, width, height);
+        for (x, y) in (0..self.tiles.num_columns()).cartesian_product(0..self.tiles.num_rows()) {
+            let src = &self.tiles.get(x, y).unwrap().unwrap();
+            for (u, v) in (0..8).cartesian_product(0..8) {
+                let (src_u, src_v) = (!src.arrangement).transform(u, v, 8);
+                let i = 10 * src_v + src_u;
+                image.set(8 * x + u, 8 * y + v, src.tile.grid[i]).unwrap();
+            }
+        }
+        image
+    }
+}
+
+pub struct ArrangedSquareBitmap<'a> {
+    arrangement: RotoReflection,
+    src: &'a Array2D<bool>,
+}
+
+impl<'a> ArrangedSquareBitmap<'a> {
+    pub fn new(arr: RotoReflection, src: &'a Array2D<bool>) -> Option<Self> {
+        if src.num_rows() == src.num_columns() {
+            Some(Self {
+                arrangement: arr,
+                src,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn get(&self, x: usize, y: usize) -> Option<&bool> {
+        let (src_x, src_y) = (!self.arrangement).transform(x, y, self.src.num_columns());
+        println!("{}, {}", src_x, src_y);
+        self.src.get(src_x, src_y)
     }
 }
 

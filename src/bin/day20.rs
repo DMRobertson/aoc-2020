@@ -1,5 +1,8 @@
-use aoc_2020::lib20::*;
 use std::fmt;
+
+use strum::IntoEnumIterator;
+
+use aoc_2020::lib20::*;
 
 fn main() {
     // One day I'll work out how to write "an Iterator that yields &str or &String". Until now,
@@ -242,9 +245,13 @@ fn step(e: Edge, x: usize, y: usize) -> (usize, usize) {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use std::collections::HashSet;
     use std::iter::FromIterator;
+
+    use array2d::Array2D;
+    use itertools::Itertools;
+
+    use super::*;
 
     #[test]
     fn test_edge_lookup() {
@@ -283,6 +290,29 @@ mod test {
         let tiles_by_edges = build_edge_lookup(&tiles);
         let c = search_for_composition(&tiles, &tiles_by_edges).unwrap();
         assert_eq!(c.corners(), 20899048083289);
+        let image = c.assemble();
+        let expected_image = Array2D::from_iter_row_major(
+            EXAMPLE_ONE_ASSEMBLED
+                .split("\n")
+                .flat_map(|s| s.chars().map(|c| c == '#')),
+            24,
+            24,
+        );
+
+        assert_eq!(image.num_rows(), 24);
+        assert_eq!(image.num_columns(), 24);
+        assert_eq!(expected_image.num_rows(), 24);
+        assert_eq!(expected_image.num_columns(), 24);
+        println!("{:?}", expected_image);
+
+        let test = |arrangement: RotoReflection| {
+            let view = ArrangedSquareBitmap::new(arrangement, &image).unwrap();
+            println!("{:?}", arrangement);
+            (0..image.num_columns())
+                .cartesian_product(0..image.num_rows())
+                .all(|(x, y)| expected_image.get(x, y).unwrap() == view.get(x, y).unwrap())
+        };
+        assert!(RotoReflection::iter().any(test));
     }
 
     #[test]
@@ -402,4 +432,30 @@ Tile 3079:
 ..#.###...
 ..#.......
 ..#.###...";
+
+    const EXAMPLE_ONE_ASSEMBLED: &'static str = "\
+.#.#..#.##...#.##..#####
+###....#.#....#..#......
+##.##.###.#.#..######...
+###.#####...#.#####.#..#
+##.#....#.##.####...#.##
+...########.#....#####.#
+....#..#...##..#.#.###..
+.####...#..#.....#......
+#..#.##..#..###.#.##....
+#.####..#.####.#.#.###..
+###.#.#...#.######.#..##
+#.####....##..########.#
+##..##.#...#...#.#.#.#..
+...#..#..#.#.##..###.###
+.#.#....#.##.#...###.##.
+###.#...#..#.##.######..
+.#.#.###.##.##.#..#.##..
+.####.###.#...###.#..#.#
+..#.#..#..#.#.#.####.###
+#..####...#.#.#.###.###.
+#####..#####...###....##
+#.##..#..#...#..####...#
+.#.###..##..##..####.##.
+...###...##...#...#..###";
 }
